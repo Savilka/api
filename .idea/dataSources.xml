@@ -8,5 +8,12 @@
       <jdbc-url>jdbc:mysql://n2o93bb1bwmn0zle.chr7pe7iynqr.eu-west-1.rds.amazonaws.com:3306/qytxwbkkn14vj0yd</jdbc-url>
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
+    <data-source source="LOCAL" name="midwestemo@localhost" uuid="4a79fe18-89bd-4683-a6cc-5aba4a1c1471">
+      <driver-ref>mysql.8</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>com.mysql.cj.jdbc.Driver</jdbc-driver>
+      <jdbc-url>jdbc:mysql://localhost:3306/midwestemo</jdbc-url>
+      <working-dir>$ProjectFileDir$</working-dir>
+    </data-source>
   </component>
 </project>

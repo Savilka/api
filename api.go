@@ -2,108 +2,136 @@ package main
 
 import (
 	"api/internal/store"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	"github.com/rs/cors"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
 )
 
-type apiServer struct {
-	store *store.Store
+type App struct {
+	Router *mux.Router
+	DB     *sql.DB
 }
 
-func NewApiServer() *apiServer {
-	apiStore := store.New()
-	return &apiServer{apiStore}
-}
+func (a *App) Initialize(user, password, host, dbname string) {
+	connectionString := fmt.Sprintf("%s:%s@tcp(%s:3306)/%s", user, password, host, dbname)
 
-func renderJSON(w http.ResponseWriter, v interface{}) {
-	js, err := json.Marshal(v)
+	var err error
+	a.DB, err = sql.Open("mysql", connectionString)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		log.Fatal(err)
 	}
+
+	a.Router = mux.NewRouter().StrictSlash(true)
+
+	a.initializeRoutes()
+}
+
+func (a *App) Run(addr string) {
+	log.Fatal(http.ListenAndServe(addr, cors.Default().Handler(a.Router)))
+}
+
+func (a *App) initializeRoutes() {
+	a.Router.HandleFunc("/news/", a.getAllNewsHandler).Methods("GET")
+	a.Router.HandleFunc("/news/{id}/", a.getNewsByIdHandler).Methods("GET")
+	a.Router.HandleFunc("/releases/", a.getAllReleasesHandler).Methods("GET")
+	a.Router.HandleFunc("/news/", a.postNewsHandler).Methods("POST")
+	a.Router.HandleFunc("/news/{id}/", a.deleteNewsById).Methods("DELETE")
+}
+
+func respondWithError(w http.ResponseWriter, code int, message string) {
+	respondWithJSON(w, code, map[string]string{"error": message})
+}
+
+func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+	response, _ := json.Marshal(payload)
+
 	w.Header().Set("Content-Type", "application/json")
-	_, err = w.Write(js)
-	if err != nil {
-		return
-	}
+	w.WriteHeader(code)
+	_, _ = w.Write(response)
 }
 
-func main() {
-	router := mux.NewRouter().StrictSlash(true)
-	server := NewApiServer()
-
-	router.HandleFunc("/news/", server.getAllNewsHandler).Methods("GET")
-	router.HandleFunc("/news/{id}", server.getNewsByIdHandler).Methods("GET")
-	router.HandleFunc("/releases/", server.getAllReleasesHandler).Methods("GET")
-	router.HandleFunc("/news/", server.addNewsHandler).Methods("POST")
-	router.HandleFunc("/news/{id}", server.deleteNewsById).Methods("DELETE")
-
-	handler := cors.Default().Handler(router)
-
-	//Запуск сервера
-	log.Fatal(http.ListenAndServe("localhost:10000", handler))
-
-}
-
-func (as *apiServer) getAllNewsHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("handling get all news at %s\n", r.URL.Path)
-
-	allNews, err := as.store.GetAllNews()
+func (a *App) getAllNewsHandler(w http.ResponseWriter, _ *http.Request) {
+	news, err := store.GetAllNews(a.DB)
 	if err != nil {
-		log.Println(err.Error())
-	}
-
-	renderJSON(w, allNews)
-
-}
-
-func (as *apiServer) getAllReleasesHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("handling get all news at %s\n", r.URL.Path)
-
-	allReleases, err := as.store.GetAllReleases()
-	if err != nil {
-		log.Println(err.Error())
-	}
-
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Origin", "Content-Type")
-	renderJSON(w, allReleases)
-
-}
-
-func (as *apiServer) getNewsByIdHandler(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(mux.Vars(r)["id"])
-	log.Printf("handling get news with id = '%d' at %s\n", id, r.URL.Path)
-
-	task, err := as.store.GetNewsById(id)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	renderJSON(w, task)
+	respondWithJSON(w, http.StatusOK, news)
 }
 
-func (as *apiServer) deleteNewsById(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.Atoi(mux.Vars(r)["id"])
-	log.Printf("handling delete news with id = '%d' at %s\n", id, r.URL.Path)
-
-	err := as.store.DeleteNewsById(id)
+func (a *App) getAllReleasesHandler(w http.ResponseWriter, _ *http.Request) {
+	releases, err := store.GetAllReleases(a.DB)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		respondWithError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	respondWithJSON(w, http.StatusOK, releases)
 }
 
-func (as *apiServer) addNewsHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("handling add news at %s\n", r.URL.Path)
-
-	if r.Body == nil {
-
+func (a *App) getNewsByIdHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid product ID")
+		return
 	}
+
+	n := store.News{ID: id}
+	if err := n.GetNewsById(a.DB); err != nil {
+		switch err {
+		case sql.ErrNoRows:
+			respondWithError(w, http.StatusNotFound, "News not found")
+		default:
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	respondWithJSON(w, http.StatusOK, n)
+}
+
+func (a *App) deleteNewsById(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid Product ID")
+		return
+	}
+
+	n := store.News{ID: id}
+	if err := n.DeleteNewsById(a.DB); err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, map[string]string{"result": "success"})
+}
+
+func (a *App) postNewsHandler(w http.ResponseWriter, r *http.Request) {
+	var n store.News
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&n); err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+
+		}
+	}(r.Body)
+
+	if err := n.DeleteNewsById(a.DB); err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusCreated, n)
 }

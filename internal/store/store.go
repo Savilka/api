@@ -3,7 +3,6 @@ package store
 import (
 	"database/sql"
 	"log"
-	"time"
 )
 
 // News -  структура, описывающая одну 'новость'
@@ -24,26 +23,10 @@ type Release struct {
 	Pic    string `json:"pic"`
 }
 
-type Store struct {
-	db *sql.DB
-}
-
-func New() *Store {
-	s := &Store{}
-	var err error
-	s.db, err = sql.Open("mysql", "yfnk95pabxc7o8pb:cji3ywltts8o22ui"+
-		"@tcp(n2o93bb1bwmn0zle.chr7pe7iynqr.eu-west-1.rds.amazonaws.com:3306)/qytxwbkkn14vj0yd")
+func (n *News) GetNewsById(db *sql.DB) error {
+	stmtOut, err := db.Prepare("SELECT * FROM `news` WHERE id = ?")
 	if err != nil {
-		panic(err.Error())
-	}
-
-	return s
-}
-
-func (s *Store) GetNewsById(id int) (News, error) {
-	stmtOut, err := s.db.Prepare("SELECT * FROM `news` WHERE id = ?")
-	if err != nil {
-		return News{}, err
+		return err
 	}
 
 	defer func(stmtOut *sql.Stmt) {
@@ -53,17 +36,16 @@ func (s *Store) GetNewsById(id int) (News, error) {
 		}
 	}(stmtOut)
 
-	var news News
-	err = stmtOut.QueryRow(id).Scan(&news.ID, &news.Date, &news.Headline, &news.Announce, &news.Text, &news.Pic)
+	err = stmtOut.QueryRow(n.ID).Scan(&n.ID, &n.Date, &n.Headline, &n.Announce, &n.Text, &n.Pic)
 	if err != nil {
-		return News{}, err
+		return err
 	}
 
-	return news, nil
+	return nil
 }
 
-func (s *Store) GetAllNews() ([]News, error) {
-	results, err := s.db.Query("SELECT * FROM `news`")
+func GetAllNews(db *sql.DB) ([]News, error) {
+	results, err := db.Query("SELECT * FROM `news`")
 	if err != nil {
 		return []News{}, err
 	}
@@ -82,8 +64,8 @@ func (s *Store) GetAllNews() ([]News, error) {
 	return allNews, nil
 }
 
-func (s *Store) GetAllReleases() ([]Release, error) {
-	results, err := s.db.Query("SELECT * FROM `releases`")
+func GetAllReleases(db *sql.DB) ([]Release, error) {
+	results, err := db.Query("SELECT * FROM `releases`")
 	if err != nil {
 		return []Release{}, err
 	}
@@ -102,8 +84,8 @@ func (s *Store) GetAllReleases() ([]Release, error) {
 	return allReleases, nil
 }
 
-func (s *Store) DeleteNewsById(id int) (err error) {
-	stmtDel, err := s.db.Prepare("DELETE FROM `news` WHERE id = ?")
+func (n *News) DeleteNewsById(db *sql.DB) error {
+	stmtDel, err := db.Prepare("DELETE FROM `news` WHERE id = ?")
 	if err != nil {
 		return err
 	}
@@ -115,13 +97,13 @@ func (s *Store) DeleteNewsById(id int) (err error) {
 		}
 	}(stmtDel)
 
-	_, err = stmtDel.Query(id)
+	_, err = stmtDel.Exec(n.ID)
 
 	return err
 }
 
-func (s *Store) AddNews(date time.Time, headline string, announce string, text string, pic string) (err error) {
-	stmtDel, err := s.db.Prepare("INSERT INTO news(date, headline, announce, text, pic) VALUES (?, ?, ?, ?, ?)")
+func (n *News) AddNews(db *sql.DB) error {
+	stmtDel, err := db.Prepare("INSERT INTO news(date, headline, announce, text, pic) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		return err
 	}
@@ -133,7 +115,17 @@ func (s *Store) AddNews(date time.Time, headline string, announce string, text s
 		}
 	}(stmtDel)
 
-	_, err = stmtDel.Query(date, headline, announce, text, pic)
+	res, err := stmtDel.Exec(n.Date, n.Headline, n.Announce, n.Text, n.Pic)
+	if err != nil {
+		return err
+	}
 
-	return err
+	lid, err := res.LastInsertId()
+	if err != nil {
+		return err
+	}
+
+	n.ID = int(lid)
+
+	return nil
 }
